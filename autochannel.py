@@ -250,8 +250,23 @@ class AutoChannel:
             
     def create_and_upload_video(self, song_tuple, playlist, channels=['nightcore', 'chipmunks']):
         videomaker = VideoMaker(song_tuple, playlist)
-        videomaker.pipeline(transformations=channels)
+        try:
+            videomaker.pipeline(transformations=channels)
+        except:
+            pass
         if videomaker.step != 'end':
             return 'error'
         for channel in channels:
             upload(videomaker.files['mp4_'+ channel], videomaker.title_complete, channel, self.clients[channel])
+            print('Video uploaded!', end='\n\n')
+            
+    def upload_all_new(self, channel, wait=900):
+        if not self.clients[channel]:
+            self.get_client(channel)
+        if not self.new_songs[channel]:
+            self.get_new_songs(channel)
+        
+        for i in range(self.new_songs[channel].shape[0]):
+            song_tuple, playlist = self.new_songs[channel].iloc[i]
+            self.create_and_upload_video(song_tuple, playlist, channels=[channel])
+            sleep(wait)
