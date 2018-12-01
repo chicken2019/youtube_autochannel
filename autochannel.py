@@ -3,8 +3,9 @@ import os
 import re
 import pafy
 import pandas as pd
+import numpy as np
 from spotipy.oauth2 import SpotifyClientCredentials
-from youtube_functions import youtube_search, get_video_list, get_authenticated_service, upload
+from youtube_functions import youtube_search, get_video_list, get_authenticated_service, upload, get_result_number
 from pydub import AudioSegment
 from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips
 from time import sleep
@@ -18,13 +19,13 @@ with open('keys.txt', 'r') as keys:
     SPOTIFY_SECRET = secret_keys[2]
                      
 class VideoMaker:
-    def __init__(self, song_tuple, playlist):
+    def __init__(self, title, artists, playlist):
         self.playlist = playlist
-        self.title = song_tuple[0]
-        self.artists = song_tuple[1].split(', ')
+        self.title = re.sub(' - .+$', '', title)
+        self.artists = artists
         self.title_complete = ' - '.join([self.title, ', '.join([artist for artist in self.artists
                                                                  if artist.lower() not in self.title.lower()])])
-        self.title_simple = re.findall('^\w+(?: \w+)*', self.title)[0].lower()
+        self.title_simple = re.findall('[^([]+', self.title)[0].strip().lower()
         self.title_path = '_'.join(self.title_simple.split(' '))
         self.step = 'start'
         self.files = {'url':None, 'm4a':None, 'wav':None, 'wav_speed':None, 'wav_pitch':None,
@@ -187,7 +188,7 @@ class VideoMaker:
                 if log: print('Error')
                 return 'video error (chipmunks)'
             if log: print('Done')
-            
+        
         self.step = 'end'
         if log: print('Video created, ready to upload')
         return 'completed'
@@ -209,47 +210,48 @@ class AutoChannel:
                             'Mint':{'uri':'spotify:user:spotify:playlist:37i9dQZF1DX4dyzvuaRJ0n',
                                                'img':'nightcore_mint.png'},
                             'Hot Country':{'uri':'spotify:user:spotify:playlist:37i9dQZF1DX1lVhptIYRda',
-                                               'img':'nightcore_country.png'},
-                            'Rock This':{'uri':'spotify:user:spotify:playlist:37i9dQZF1DXcF6B6QPhFDv',
-                                               'img':'nightcore_rock.png'},
-                            'BPM':{'uri':'spotify:user:spotify:playlist:37i9dQZF1DX5wB72P2sVsT',
-                                               'img':'nightcore_bpm.png'}}
+                                               'img':'nightcore_country.png'}}
         self.artist_bans = ['Willow Sage Hart', 'Calvin Harris', 'Dua Lipa', 'Various Artists', 'Kanye West',
-                            'Jay Rock', 'Palaye Royale']
+                            'Jay Rock', 'Palaye Royale', 'Aimyon']
         self.keys = {'youtube_api_key':YOUTUBE_API_KEY,
                      'spotify_id':SPOTIFY_ID,
                      'spotify_secret':SPOTIFY_SECRET}
-
+        self.sp = spotipy.Spotify(client_credentials_manager=SpotifyClientCredentials(client_id=self.keys['spotify_id'],
+                                                              client_secret=self.keys['spotify_secret']))
+        
         self.clients = {'chipmunks':None, 'nightcore':None}
-        self.new_songs = {'chipmunks':None, 'nightcore':None}
+        self.new_songs = {'chipmunks':pd.DataFrame(), 'nightcore':pd.DataFrame()}
 
     def get_client(self, channel):
         self.clients[channel] = get_authenticated_service()
 
     def get_tracks(self, playlist):
-        client_credentials_manager = SpotifyClientCredentials(client_id=self.keys['spotify_id'],
-                                                              client_secret=self.keys['spotify_secret'])
-        sp = spotipy.Spotify(client_credentials_manager=client_credentials_manager)
-        playlist_items = sp.user_playlist_tracks("spotify", playlist_id=self.playlist_infos[playlist]['uri'])['items']
-        playlist_tracks = [(item['track']['name'], ', '.join([artist['name'] for artist in item['track']['artists']]))
-                           for item in playlist_items]
-        return playlist_tracks
+        playlist_items = self.sp.user_playlist_tracks("spotify", playlist_id=self.playlist_infos[playlist]['uri'])['items']
+        playlist_tracks = [(item['track']['name'], [artist['name'] for artist in item['track']['artists']],
+                           item['track']['popularity']) for item in playlist_items]
+        return pd.DataFrame(playlist_tracks, columns=['title', 'artists', 'popularity'])
     
     def get_new_songs(self, channel):
         my_songs = get_video_list(channel)
         new_songs = []
         for playlist in self.playlist_infos.keys():
-            playlist_songs = self.get_tracks(playlist)
-            playlist_songs = [song for song in playlist_songs
-                              if (not any(artist in song[1] for artist in self.artist_bans))
-                              and (not any(song[0][:5] in my_song and song[1][:5] in my_song
-                                           for my_song in my_songs))]
-            print('{} : {} new songs'.format(playlist, len(playlist_songs)))
-            new_songs.extend([(song, playlist) for song in playlist_songs])
-        self.new_songs[channel] = pd.DataFrame(new_songs, columns=['song_tuple', 'playlist'])
+            p_new_songs = self.get_tracks(playlist)
+            p_new_songs = p_new_songs.loc[\
+                         (p_new_songs['artists'].apply(lambda artists: not any(artist in self.artist_bans for artist in artists)))
+                       & (p_new_songs['title'].apply(lambda title: not any(re.findall('[^([]+', title)[0] in song for song in my_songs)))
+                       ,:]
+            print('{} : {} new songs'.format(playlist, p_new_songs.shape[0]))
+            p_new_songs['playlist'] = playlist
+            new_songs.append(p_new_songs)
+        new_songs_df = pd.concat(new_songs, ignore_index=True).drop_duplicates('title', keep='last')
+        new_songs_df['search_score'] = new_songs_df['artists'].apply(lambda artists:
+            int(np.log(1 + np.max([get_result_number('intitle:{} "{}"'.format(channel, artist)) for artist in artists]))**2))
+        new_songs_df['score'] = (new_songs_df['search_score'] + new_songs_df['popularity']) // 2
+        new_songs_df.sort_values('score', ascending=False, inplace=True)
+        self.new_songs[channel] = new_songs_df
             
-    def create_and_upload_video(self, song_tuple, playlist, channels=['nightcore', 'chipmunks']):
-        videomaker = VideoMaker(song_tuple, playlist)
+    def create_and_upload_video(self, title, artists, playlist, channels=['nightcore', 'chipmunks']):
+        videomaker = VideoMaker(title, artists, playlist)
         try:
             videomaker.pipeline(transformations=channels)
         except:
@@ -258,15 +260,20 @@ class AutoChannel:
             return 'error'
         for channel in channels:
             upload(videomaker.files['mp4_'+ channel], videomaker.title_complete, channel, self.clients[channel])
-            print('Video uploaded!', end='\n\n')
+            print('Video uploaded! ({})'.format(channel), end='\n\n')
+        videomaker.clean()
+        return 'uploaded'
             
-    def upload_all_new(self, channel, wait=900):
+    def upload_new_songs(self, channel, n=5, wait_factor=15):
         if not self.clients[channel]:
             self.get_client(channel)
-        if not self.new_songs[channel]:
+        if self.new_songs[channel].shape[0] == 0:
             self.get_new_songs(channel)
+        n = min(n, self.new_songs[channel].shape[0])
         
-        for i in range(self.new_songs[channel].shape[0]):
-            song_tuple, playlist = self.new_songs[channel].iloc[i]
-            self.create_and_upload_video(song_tuple, playlist, channels=[channel])
-            sleep(wait)
+        for i in range(n):
+            title, artists, _, playlist, _, score = self.new_songs[channel].iloc[i]
+            print('Song : {} / Artists : {} / Playlist : {}, Score : {}'.format(title, artists, playlist, score))
+            status = self.create_and_upload_video(title, artists, playlist, channels=[channel])
+            if status == 'uploaded':
+                sleep(wait_factor*score)

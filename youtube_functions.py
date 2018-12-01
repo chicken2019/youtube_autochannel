@@ -7,12 +7,10 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.http import MediaFileUpload
 from googleapiclient.discovery import build
 
-
 DEVELOPER_KEY = "AIzaSyBIjFukfphm1z-pTsMBwDmPmqZtW8Ia8hc"
+youtube = build("youtube", "v3", developerKey=DEVELOPER_KEY)
 
 def youtube_search(q):
-
-  youtube = build("youtube", "v3", developerKey=DEVELOPER_KEY)
 
   search_response = youtube.search().list(
     q=q,
@@ -51,6 +49,11 @@ def get_video_list(channel):
         results.extend([item['snippet']['title'] for item in req.json()['items']])
     return results
 
+def get_result_number(q):
+    return youtube.search().list(
+            q=q, part='snippet'
+           ).execute()['pageInfo']['totalResults']
+    
 # The CLIENT_SECRETS_FILE variable specifies the name of a file that contains
 # the OAuth 2.0 information for this application, including its client_id and
 # client_secret.
@@ -89,11 +92,10 @@ def resumable_upload(request, resource, method):
   error = None
   retry = 0
   while response is None:
-    print("Uploading file...")
     status, response = request.next_chunk()
     if response is not None:
       if method == 'insert' and 'id' in response:
-        print(response)
+        pass
       elif method != 'insert' or 'id' not in response:
         print(response)
       else:
