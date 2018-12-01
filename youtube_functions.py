@@ -40,6 +40,8 @@ def get_video_list(channel):
         playlist_id = 'UUeZz51d6hoLYapE8omsuK_Q'
     elif channel == 'nightcore':
         playlist_id = 'UUhvVVC6xPA0MWzkt78nKm6Q'
+    elif channel == 'male':
+        playlist_id = 'UUrxcDHzoHC3O7aeNS18YrXQ'
     results = []
     link = "https://www.googleapis.com/youtube/v3/playlistItems"
     req = requests.get("{}?playlistId={}&key={}&part=snippet&maxResults=50".format(link, playlist_id, DEVELOPER_KEY))
@@ -171,11 +173,14 @@ def upload(media_file, title, channel, client):
       tags = 'chipmunks, chipettes, alvin, alvin and the chipmunks, remix, {}'.format(title.replace('-', ','))
   elif channel == 'nightcore':
       tags = 'nightcore, music, anime, remix, {}'.format(title.replace('-', ','))
+  elif channel == 'male':
+      tags = 'male, male version, remix, pitch, {}'.format(title.replace('-', ','))
+      channel = 'male version'
       
   videos_insert(client, 
     {'snippet.categoryId': '10',
      'snippet.defaultLanguage': '',
-     'snippet.description': '{} {} - Post your suggestions in the comments!'.format(channel.title(), title),
+     'snippet.description': '{} {} - Post your suggestions in the comments!\nIf you want to support me : https://www.tipeeestream.com/nightcore-universe/donation, thanks a lot :)'.format(channel.title(), title),
      'snippet.tags[]': tags,
      'snippet.title': '({}) {}'.format(channel.upper(), title),
      'status.embeddable': '',

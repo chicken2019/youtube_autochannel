@@ -2,8 +2,10 @@ import spotipy
 import os
 import re
 import pafy
+import requests
 import pandas as pd
 import numpy as np
+import json
 from spotipy.oauth2 import SpotifyClientCredentials
 from youtube_functions import youtube_search, get_video_list, get_authenticated_service, upload, get_result_number
 from pydub import AudioSegment
@@ -11,15 +13,16 @@ from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips
 from time import sleep
 from PIL import Image, ImageFont, ImageDraw
 
-
-with open('keys.txt', 'r') as keys:
-    secret_keys = keys.read().split('\n')
-    YOUTUBE_API_KEY = secret_keys[0]
-    SPOTIFY_ID = secret_keys[1]
-    SPOTIFY_SECRET = secret_keys[2]
+with open('keys.json') as f:
+    keys = json.load(f)
+    YOUTUBE_API_KEY = keys['YOUTUBE_API_KEY']
+    SPOTIFY_ID = keys['SPOTIFY_ID']
+    SPOTIFY_SECRET = keys['SPOTIFY_SECRET']
+    LASTFM_KEY = keys['LASTFM_KEY']
                      
 class VideoMaker:
     def __init__(self, title, artists, playlist):
+
         self.playlist = playlist
         self.title = re.sub(' - .+$', '', title)
         self.artists = artists
@@ -28,7 +31,7 @@ class VideoMaker:
         self.title_simple = re.findall('[^([]+', self.title)[0].strip().lower()
         self.title_path = '_'.join(self.title_simple.split(' '))
         self.step = 'start'
-        self.files = {'url':None, 'm4a':None, 'wav':None, 'wav_speed':None, 'wav_pitch':None,
+        self.files = {'url':None, 'm4a':None, 'wav':None, 'wav_speed':None, 'wav_pitch_up':None,
                       'png_chipmunks':None, 'png_nightcore':None, 'mp4_chipmunks':None,
                       'mp4_nightcore':None}
     
@@ -55,12 +58,19 @@ class VideoMaker:
         sound.export(self.create_file('.wav'), format="wav")
         self.files['wav'] = self.create_file('.wav')
 
-    def pitch_up_song(self, pitch=8):
+    def pitch_up_song(self, pitch=7):
         os.chdir('rubberband')
         os.system('rubberband -t 1.0 -p {}.0 {} {}'.format(pitch, self.create_file('.wav', '../temp/'),
-                  self.create_file('_pitch.wav', '../temp/')))
+                  self.create_file('_pitch_up.wav', '../temp/')))
         os.chdir('..')
-        self.files['wav_pitch'] = self.create_file('_pitch.wav')
+        self.files['wav_pitch_up'] = self.create_file('_pitch_up.wav')
+        
+    def pitch_down_song(self, pitch=-4):
+        os.chdir('rubberband')
+        os.system('rubberband -t 1.0 -p {}.0 {} {}'.format(pitch, self.create_file('.wav', '../temp/'),
+                  self.create_file('_pitch_down.wav', '../temp/')))
+        os.chdir('..')
+        self.files['wav_pitch_down'] = self.create_file('_pitch_down.wav')
 
     def speed_up_song(self, octaves=0.35):
         sound = AudioSegment.from_file(self.files['wav'])
@@ -83,6 +93,11 @@ class VideoMaker:
             img_path = 'resources/backgrounds/' + AutoChannel().playlist_infos[self.playlist]['img']
         elif effect == 'chipmunks':
             img_path = 'resources/backgrounds/chip.png'
+        elif effect == 'male':
+            img_path = 'resources/backgrounds/' + '_'.join(self.artists[0].lower().split()) + '.png'
+            if '_'.join(self.artists[0].lower().split()) + '.png' not in os.listdir('resources/backgrounds'):
+                print('Image does not exist, please create ' + '_'.join(self.artists[0].lower().split()) + '.png')
+                input('Press enter when done')
 
         base = Image.open(img_path)
         fontsize = int(25e4 //  sum([char_size[char] if char in char_size else 100 for char in title]))
@@ -101,7 +116,9 @@ class VideoMaker:
         if effect == 'nightcore':
             sound = AudioFileClip(self.files['wav_speed'])
         if effect == 'chipmunks':
-            sound = AudioFileClip(self.files['wav_pitch'])
+            sound = AudioFileClip(self.files['wav_pitch_up'])
+        if effect == 'male':
+            sound = AudioFileClip(self.files['wav_pitch_down'])
         if sound.duration > 600 or sound.duration < 60:
             return 'audio too short or too long'
         image = image.set_duration(sound.duration)
@@ -150,11 +167,19 @@ class VideoMaker:
             if log: print('4 (chipmunks). Pitching up audio : ', end='')
             self.step = 'transformation'
             self.pitch_up_song()
-            if not self.files['wav_pitch']:
+            if not self.files['wav_pitch_up']:
                 if log: print('Error')
                 return 'pitch up error'
             if log: print('Done')
-        
+        if 'male' in transformations:
+            if log: print('4 (male). Pitching down audio : ', end='')
+            self.step = 'transformation'
+            self.pitch_down_song()
+            if not self.files['wav_pitch_down']:
+                if log: print('Error')
+                return 'pitch down error'
+            if log: print('Done')
+            
         if 'nightcore' in transformations:
             if log: print('5 (nightcore). Creating background : ', end='')
             self.step = 'background'
@@ -170,6 +195,14 @@ class VideoMaker:
             if not self.files['png_chipmunks']:
                 if log: print('Error')
                 return 'background error (chipmunks)'
+            if log: print('Done')
+        if 'male' in transformations:
+            if log: print('5 (male). Creating background : ', end='')
+            self.step = 'background'
+            self.create_background(effect='male')
+            if not self.files['png_male']:
+                if log: print('Error')
+                return 'background error (male)'
             if log: print('Done')
         
         if 'nightcore' in transformations:
@@ -187,6 +220,14 @@ class VideoMaker:
             if not self.files['mp4_chipmunks']:
                 if log: print('Error')
                 return 'video error (chipmunks)'
+            if log: print('Done')
+        if 'male' in transformations:
+            if log: print('6 (male). Generating video : ', end='')
+            self.step = 'video'
+            self.create_video(effect='male')
+            if not self.files['mp4_male']:
+                if log: print('Error')
+                return 'video error (male)'
             if log: print('Done')
         
         self.step = 'end'
@@ -219,8 +260,8 @@ class AutoChannel:
         self.sp = spotipy.Spotify(client_credentials_manager=SpotifyClientCredentials(client_id=self.keys['spotify_id'],
                                                               client_secret=self.keys['spotify_secret']))
         
-        self.clients = {'chipmunks':None, 'nightcore':None}
-        self.new_songs = {'chipmunks':pd.DataFrame(), 'nightcore':pd.DataFrame()}
+        self.clients = {'chipmunks':None, 'nightcore':None, 'male':None}
+        self.new_songs = {'chipmunks':pd.DataFrame(), 'nightcore':pd.DataFrame(), 'male': pd.DataFrame()}
 
     def get_client(self, channel):
         self.clients[channel] = get_authenticated_service()
@@ -234,15 +275,32 @@ class AutoChannel:
     def get_new_songs(self, channel):
         my_songs = get_video_list(channel)
         new_songs = []
+        
         for playlist in self.playlist_infos.keys():
             p_new_songs = self.get_tracks(playlist)
             p_new_songs = p_new_songs.loc[\
                          (p_new_songs['artists'].apply(lambda artists: not any(artist in self.artist_bans for artist in artists)))
-                       & (p_new_songs['title'].apply(lambda title: not any(re.findall('[^([]+', title)[0] in song for song in my_songs)))
+                       & (p_new_songs['title'].apply(lambda title: not any(re.findall('[^([-]+', title)[0] in song for song in my_songs)))
                        ,:]
+            if channel == 'male':
+                def is_woman(artist, thresh=0.02):
+                        r = requests.get("http://ws.audioscrobbler.com/2.0/?autocorrect=1&method=artist.getinfo&artist={}&api_key={}&format=json".format(artist.lower(), LASTFM_KEY)).json()
+                        if 'artist' not in r:
+                            return False
+                        bio = r['artist']['bio']['content']
+                        count_she_her = len(re.findall('(she|her) ', bio.lower()))
+                        count_words = len(bio.split())
+                        if count_words:
+                            return count_she_her/count_words > thresh
+                        else:
+                            return False
+                p_new_songs = p_new_songs.loc[p_new_songs['artists'].apply(lambda artists: len(artists)==1)]
+                p_new_songs = p_new_songs.loc[p_new_songs['artists'].apply(lambda artists: is_woman(artists[0]))]
+            
             print('{} : {} new songs'.format(playlist, p_new_songs.shape[0]))
             p_new_songs['playlist'] = playlist
             new_songs.append(p_new_songs)
+            
         new_songs_df = pd.concat(new_songs, ignore_index=True).drop_duplicates('title', keep='last')
         new_songs_df['search_score'] = new_songs_df['artists'].apply(lambda artists:
             int(np.log(1 + np.max([get_result_number('intitle:{} "{}"'.format(channel, artist)) for artist in artists]))**2))
@@ -264,16 +322,20 @@ class AutoChannel:
         videomaker.clean()
         return 'uploaded'
             
-    def upload_new_songs(self, channel, n=5, wait_factor=15):
+    def upload_new_songs(self, channel, n=5, wait_factor=20):
         if not self.clients[channel]:
             self.get_client(channel)
         if self.new_songs[channel].shape[0] == 0:
             self.get_new_songs(channel)
         n = min(n, self.new_songs[channel].shape[0])
         
-        for i in range(n):
-            title, artists, _, playlist, _, score = self.new_songs[channel].iloc[i]
-            print('Song : {} / Artists : {} / Playlist : {}, Score : {}'.format(title, artists, playlist, score))
+        i=0
+        j=0
+        while i<n and j<=self.new_songs[channel].shape[0]:
+            title, artists, _, playlist, _, score = self.new_songs[channel].iloc[j]
+            print('Song : {} / Artists : {} / Playlist : {} / Score : {}'.format(title, artists, playlist, score))
             status = self.create_and_upload_video(title, artists, playlist, channels=[channel])
+            j+=1
             if status == 'uploaded':
+                i+=1
                 sleep(wait_factor*score)
