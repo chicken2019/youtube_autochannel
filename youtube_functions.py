@@ -170,17 +170,21 @@ def upload(media_file, title, channel, client):
   os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
   
   if channel == 'chipmunks':
-      tags = 'chipmunks, chipettes, alvin, alvin and the chipmunks, remix, {}'.format(title.replace('-', ','))
+      tags = 'chipmunks, chipettes, alvin, alvin and the chipmunks, remix, alvin y las ardillas, ardillas, {}'.format(title.replace('-', ','))
   elif channel == 'nightcore':
       tags = 'nightcore, music, anime, remix, {}'.format(title.replace('-', ','))
   elif channel == 'male':
       tags = 'male, male version, remix, pitch, {}'.format(title.replace('-', ','))
       channel = 'male version'
-      
+  
+  if channel == 'nightcore':
+      description = "Make your own nightcore with my website : https://www.nightcorizer.com !"
+  else:
+      description = '{} {} - Post your suggestions in the comments!\nIf you want to support me : https://www.tipeeestream.com/nightcore-universe/donation, thanks a lot :)'.format(channel.title(), title)
   videos_insert(client, 
     {'snippet.categoryId': '10',
      'snippet.defaultLanguage': '',
-     'snippet.description': '{} {} - Post your suggestions in the comments!\nIf you want to support me : https://www.tipeeestream.com/nightcore-universe/donation, thanks a lot :)'.format(channel.title(), title),
+     'snippet.description': description,
      'snippet.tags[]': tags,
      'snippet.title': '({}) {}'.format(channel.upper(), title),
      'status.embeddable': '',

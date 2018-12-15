@@ -6,6 +6,7 @@ import requests
 import pandas as pd
 import numpy as np
 import json
+import unidecode
 from spotipy.oauth2 import SpotifyClientCredentials
 from youtube_functions import youtube_search, get_video_list, get_authenticated_service, upload, get_result_number
 from pydub import AudioSegment
@@ -28,7 +29,7 @@ class VideoMaker:
         self.artists = artists
         self.title_complete = ' - '.join([self.title, ', '.join([artist for artist in self.artists
                                                                  if artist.lower() not in self.title.lower()])])
-        self.title_simple = re.findall('[^([]+', self.title)[0].strip().lower()
+        self.title_simple = unidecode.unidecode(re.findall('[^([?!]+', self.title)[0].strip().lower())
         self.title_path = '_'.join(self.title_simple.split(' '))
         self.step = 'start'
         self.files = {'url':None, 'm4a':None, 'wav':None, 'wav_speed':None, 'wav_pitch_up':None,
@@ -43,7 +44,7 @@ class VideoMaker:
         search = youtube_search(q)[1]
         video = search[0]
         video_title = video['snippet']['title'].lower()
-        if self.title_simple.lower() not in video_title.lower()\
+        if self.title_simple not in unidecode.unidecode(video_title.lower())\
         or any(word in video_title for word in ['reaction', 'trailer']):
             return 'song not found'
         self.files['url'] = "www.youtube.com/watch?v=" + video['id']['videoId']
@@ -94,10 +95,16 @@ class VideoMaker:
         elif effect == 'chipmunks':
             img_path = 'resources/backgrounds/chip.png'
         elif effect == 'male':
-            img_path = 'resources/backgrounds/' + '_'.join(self.artists[0].lower().split()) + '.png'
-            if '_'.join(self.artists[0].lower().split()) + '.png' not in os.listdir('resources/backgrounds'):
-                print('Image does not exist, please create ' + '_'.join(self.artists[0].lower().split()) + '.png')
-                input('Press enter when done')
+            if '_'.join(self.artists[0].lower().split()) + '.png' in os.listdir('resources/backgrounds'):
+                img_path =  'resources/backgrounds/' + '_'.join(self.artists[0].lower().split()) + '.png'
+            else:
+                r = requests.get("http://ws.audioscrobbler.com/2.0/?autocorrect=1&method=artist.getinfo&artist={}&api_key={}&format=json".format(self.artists[0].lower(), LASTFM_KEY)).json()
+                img_url = r['artist']['image'][-1]['#text']
+                r_img = requests.get(img_url)
+                with open(self.create_file('_' + effect + '.png'), 'wb') as f:
+                    f.write(r_img.content)
+                self.files['png_' + effect] = self.create_file('_' + effect + '.png')
+                return ''
 
         base = Image.open(img_path)
         fontsize = int(25e4 //  sum([char_size[char] if char in char_size else 100 for char in title]))
@@ -121,8 +128,16 @@ class VideoMaker:
             sound = AudioFileClip(self.files['wav_pitch_down'])
         if sound.duration > 600 or sound.duration < 60:
             return 'audio too short or too long'
-        image = image.set_duration(sound.duration)
-        final_video = concatenate_videoclips([image], method="compose")
+        
+        if effect == 'nightcore':
+            image_pub = ImageClip('resources/backgrounds/nightcorizer.png')
+            image_pub = image_pub.set_duration(20)
+            image = image.set_duration(sound.duration-20)
+            final_video = concatenate_videoclips([image, image_pub], method="compose")
+            
+        else:
+            image = image.set_duration(sound.duration)
+            final_video = concatenate_videoclips([image], method="compose")
         final_video = final_video.set_audio(sound)
         final_video.write_videofile(self.create_file('_' + effect + '.mp4'), fps=20, preset='ultrafast',
                                     threads = 4, progress_bar=False, verbose=False)
@@ -253,7 +268,7 @@ class AutoChannel:
                             'Hot Country':{'uri':'spotify:user:spotify:playlist:37i9dQZF1DX1lVhptIYRda',
                                                'img':'nightcore_country.png'}}
         self.artist_bans = ['Willow Sage Hart', 'Calvin Harris', 'Dua Lipa', 'Various Artists', 'Kanye West',
-                            'Jay Rock', 'Palaye Royale', 'Aimyon']
+                            'Jay Rock', 'Palaye Royale', 'Aimyon', 'Sam Martin']
         self.keys = {'youtube_api_key':YOUTUBE_API_KEY,
                      'spotify_id':SPOTIFY_ID,
                      'spotify_secret':SPOTIFY_SECRET}
@@ -280,15 +295,16 @@ class AutoChannel:
             p_new_songs = self.get_tracks(playlist)
             p_new_songs = p_new_songs.loc[\
                          (p_new_songs['artists'].apply(lambda artists: not any(artist in self.artist_bans for artist in artists)))
-                       & (p_new_songs['title'].apply(lambda title: not any(re.findall('[^([-]+', title)[0] in song for song in my_songs)))
+                       & (p_new_songs['title'].apply(lambda title: not any(unidecode.unidecode(re.findall('[^([-]+', title)[0])
+                                                     in unidecode.unidecode(song) for song in my_songs)))
                        ,:]
             if channel == 'male':
-                def is_woman(artist, thresh=0.02):
+                def is_woman(artist, thresh=0.025):
                         r = requests.get("http://ws.audioscrobbler.com/2.0/?autocorrect=1&method=artist.getinfo&artist={}&api_key={}&format=json".format(artist.lower(), LASTFM_KEY)).json()
                         if 'artist' not in r:
                             return False
                         bio = r['artist']['bio']['content']
-                        count_she_her = len(re.findall('(she|her) ', bio.lower()))
+                        count_she_her = len(re.findall('\W(she|her) ', bio.lower()))
                         count_words = len(bio.split())
                         if count_words:
                             return count_she_her/count_words > thresh
@@ -303,7 +319,7 @@ class AutoChannel:
             
         new_songs_df = pd.concat(new_songs, ignore_index=True).drop_duplicates('title', keep='last')
         new_songs_df['search_score'] = new_songs_df['artists'].apply(lambda artists:
-            int(np.log(1 + np.max([get_result_number('intitle:{} "{}"'.format(channel, artist)) for artist in artists]))**2))
+            int(np.log(1 + np.mean([get_result_number('intitle:{} "{}"'.format(channel, artist)) for artist in artists]))**2))
         new_songs_df['score'] = (new_songs_df['search_score'] + new_songs_df['popularity']) // 2
         new_songs_df.sort_values('score', ascending=False, inplace=True)
         self.new_songs[channel] = new_songs_df
@@ -319,7 +335,6 @@ class AutoChannel:
         for channel in channels:
             upload(videomaker.files['mp4_'+ channel], videomaker.title_complete, channel, self.clients[channel])
             print('Video uploaded! ({})'.format(channel), end='\n\n')
-        videomaker.clean()
         return 'uploaded'
             
     def upload_new_songs(self, channel, n=5, wait_factor=20):
@@ -333,9 +348,10 @@ class AutoChannel:
         j=0
         while i<n and j<=self.new_songs[channel].shape[0]:
             title, artists, _, playlist, _, score = self.new_songs[channel].iloc[j]
-            print('Song : {} / Artists : {} / Playlist : {} / Score : {}'.format(title, artists, playlist, score))
+            print('\nSong : {} / Artists : {} / Playlist : {} / Score : {}'.format(title, artists, playlist, score))
             status = self.create_and_upload_video(title, artists, playlist, channels=[channel])
             j+=1
             if status == 'uploaded':
                 i+=1
-                sleep(wait_factor*score)
+                if i<n:
+                    sleep(wait_factor*score)
